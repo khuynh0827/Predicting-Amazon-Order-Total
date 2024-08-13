@@ -1,0 +1,108 @@
+---
+title: "workflow_set"
+output: html_document
+date: "2024-08-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries and Read in Data
+```{r}
+library(prodlim)
+library(pec)
+library(dials)
+library(tidymodels)
+library(tidyverse)
+
+# read in the train and test data
+train <- read_csv("train_reg.csv")
+test <- read_csv("test_reg.csv")
+```
+
+## Preprocess Data
+```{r}
+# get rid of order_totals column 
+train <- train %>% dplyr::select(!order_totals)
+```
+
+## Perform cross fold validation and create metric set for R to evaluate workflow on
+```{r}
+# cross fold validation 
+train_folds <- vfold_cv(train, v = 10)
+
+# create a metric set to compare the other variables with 
+model_metrics <- metric_set(rmse, mae, rsq)
+
+# create a base control_grid to use for the stacks package 
+model_control <- control_grid(save_pred = TRUE, save_workflow = TRUE)
+```
+
+## Create 3 Recipes: base recipe, recipe that filters for highly correlated predictors, recipe that applies pca to reduce data's dimensionality
+```{r}
+base_recipe <- recipe(log_total ~., data = train) %>%
+  step_mutate(q_demos_state = factor(q_demos_state),
+              year = factor(year),
+              month = factor(month)) %>% 
+  # get rid of zero variance column
+  step_zv(all_predictors()) %>% 
+  # dummy variables from factor columns
+  step_dummy(all_nominal()) %>%  
+  # remove any columns with single unique value
+  step_normalize(all_predictors())
+
+filter_rec <- base_recipe %>% 
+  step_corr(all_predictors(), threshold = tune())
+
+pca_rec <- base_recipe %>% 
+  step_pca(all_numeric(), threshold = tune()) 
+```
+
+## Create 5 types of engines for workflow: linear regression, decision tree, k nearest neighbors, random forest, and boosted tree
+```{r}
+regularized_spec <- linear_reg(penalty = tune(), mixture = tune()) %>% 
+  set_engine("glmnet")
+
+cart_spec <- decision_tree(cost_complexity = tune(), min_n = tune()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("regression")
+
+knn_spec <- nearest_neighbor(neighbors = tune(), weight_func = tune()) %>% 
+  set_engine("kknn") %>% 
+  set_mode("regression")
+
+randomForest_spec <- rand_forest(min_n = tune(), 
+                                 trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("randomForest")
+
+xgboost_spec <- boost_tree(learn_rate = tune(), 
+                           trees = tune(), 
+                           tree_depth = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+```
+
+
+## Create workflow set and delete combinations of recipe and engines that don't make sense 
+```{r}
+chi_models <- workflow_set(
+  preproc = list(simple = base_recipe, filter = filter_rec, pca = pca_rec), 
+  models = list(glmnet = regularized_spec, cart = cart_spec, knn = knn_spec, rf = randomForest_spec, xgboost = xgboost_spec), 
+  cross = TRUE
+) 
+
+chi_models <- chi_models %>% anti_join(tibble(wflow_id = c("pca_glmnet", "filter_glmnet", "pca_cart", "pca_knn", "pca_rf", "pca_xgboost")), by = "wflow_id")
+```
+
+## Apply workflow map to see performance of models across 10 fold cross validation and output results
+```{r}
+chi_models <- chi_models %>% workflow_map("tune_grid", resamples = train_folds, grid = 10, metrics = model_metrics, verbose = TRUE)
+
+# output results 
+autoplot(chi_models)
+autoplot(chi_models, select_best = TRUE)
+rank_results(chi_models, rank_metric = "rmse", select_best = TRUE) 
+```
+

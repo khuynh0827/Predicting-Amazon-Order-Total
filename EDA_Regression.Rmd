@@ -1,0 +1,464 @@
+---
+title: "EDA_Regression"
+output: html_document
+date: "2024-08-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Load the Packages 
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(MASS)
+library(car)
+```
+
+## 2. Read Data 
+```{r}
+### TRAIN DATA
+train <- read_csv("train_reg.csv")
+amazon_order_train <- read_csv("amazon_order_details_train.csv")
+customer_info_train <- read_csv("customer_info_train.csv")
+
+### TEST DATA
+test <- read_csv("test_reg.csv")
+amazon_order_test <- read_csv("amazon_order_details_test.csv")
+customer_info_test <- read_csv("customer_info_test.csv")
+```
+
+```{r}
+head(train)
+dim(train)
+colnames(train)
+```
+
+### a) Preprocessing steps: Remove Order_totals column
+```{r}
+train <- train %>% dplyr::select(!order_totals) # remove order_totals column
+```
+
+### b) Power Transformation 
+```{r}
+summary(car::powerTransform(cbind(train$count + 0.001, train$count_female+ 0.001,
+                             train$count_male + 0.001, train$count_less5+ 0.001, 
+                             train$count_5to10 + 0.001, train$count_over10+ 0.001, 
+                             train$count_hh1 + 0.001, train$count_hh2+ 0.001,
+                             train$count_hh3 + 0.001, train$count_hh4+ 0.001, 
+                             train$count_howmany1 + 0.001, train$count_howmany2+ 0.001, 
+                             train$count_howmany3 + 0.001, train$count_howmany4+ 0.001, 
+                             train$count_1824 + 0.001, train$count_2534+ 0.001, 
+                             train$count_3544 + 0.001, train$count_4554+ 0.001, 
+                             train$count_5564 + 0.001, train$count_65up+ 0.001, 
+                             train$count_und25k + 0.001, train$count_2549k+ 0.001, 
+                             train$count_5074k + 0.001, train$count_7599k+ 0.001, 
+                             train$count_100149k + 0.001, train$count_150kup+ 0.001, 
+                             train$count_lessHS + 0.001, train$count_HS+ 0.001, 
+                             train$count_B + 0.001, train$count_G+ 0.001
+                             )~1))
+
+summary(car::powerTransform(cbind(train$month, train$factor_state, train$year + 0.001
+                         )~1))
+```
+
+### c) Create newly Transformed variables
+```{r}
+train_transformed <- train %>% dplyr::mutate(count_tf = sqrt(count),
+                          count_female_tf = sqrt(count_female),
+                          count_male_tf = sqrt(count_male),
+
+                          count_less5_tf = sqrt(count_less5),
+                          count_5to10_tf = sqrt(count_5to10),
+                          count_over10_tf = sqrt(count_over10),
+
+                          count_hh1_tf = sqrt(count_hh1),
+                          count_hh2_tf = sqrt(count_hh2),
+                          count_hh3_tf = sqrt(count_hh3),
+                          count_hh4_tf = sqrt(count_hh4),
+
+                          count_howmany1_tf = sqrt(count_howmany1),
+                          count_howmany2_tf = sqrt(count_howmany2),
+                          count_howmany3_tf = (count_howmany3)^ 0.21,
+                          count_howmany4_tf = log(count_howmany4 + 0.001), # recommended 0.09 which is about 0 --> dealing with log
+
+                          count_1824_tf = (count_1824)^0.33,
+                          count_2534_tf = sqrt(count_2534),
+                          count_3544_tf = sqrt(count_3544),
+                          count_4554_tf = sqrt(count_4554),
+                          count_5564_tf = (count_5564)^0.37,
+                          count_65up_tf = log10(count_65up  + 0.001), # be careful of log for this one
+
+                          count_und25k_tf = (count_und25k)^0.33,
+                          count_2549k_tf = sqrt(count_2549k),
+                          count_5074k_tf = sqrt(count_5074k),
+                          count_7599k_tf = sqrt(count_7599k),
+                          count_101149k_tf = sqrt(count_100149k),
+                          count_150kup_tf = (count_150kup)^0.35,
+
+                          count_lessHS_tf = 1 / (sqrt(count_lessHS) +  + 0.001),
+                          count_HS_tf = sqrt(count_HS),
+                          count_B_tf = sqrt(count_B),
+                          count_G_tf = sqrt(count_G),
+                          )
+```
+
+### d) Check NA Values
+```{r}
+## Any NA values? 
+      ## Result: No
+check_na <- function(data) {
+  print(which(is.na(data)))
+  print(sum(is.na(data)))
+}
+
+check_na(train)
+```
+
+## 3. EDA - 1 Var
+
+### a) Histogram + Boxplot 
+All right skewed 
+```{r}
+count_female_hist <- ggplot(train, aes(x = count_female)) + geom_histogram(bins = 30)
+count_male_hist <- ggplot(train, aes(x = count_male)) + geom_histogram(bins = 30)
+count_hist <- ggplot(train, aes(x = count)) + geom_histogram(bins = 30)
+grid.arrange(count_female_hist, count_male_hist, count_hist)
+
+count_less5_hist <- ggplot(train, aes(x = count_less5)) + geom_histogram(bins = 30)
+count_5to10_hist <- ggplot(train, aes(x = count_5to10)) + geom_histogram(bins = 30)
+count_over10_hist <- ggplot(train, aes(x = count_over10)) + geom_histogram(bins = 30)
+grid.arrange(count_less5_hist, count_5to10_hist, count_over10_hist)
+
+count_hh1_hist <- ggplot(train, aes(x = count_hh1)) + geom_histogram(bins = 30)
+count_hh2_hist <- ggplot(train, aes(x = count_hh2)) + geom_histogram(bins = 30)
+count_hh3_hist <- ggplot(train, aes(x = count_hh3)) + geom_histogram(bins = 30)
+count_hh4_hist <- ggplot(train, aes(x = count_hh4)) + geom_histogram(bins = 30)
+grid.arrange(count_hh1_hist, count_hh2_hist, count_hh3_hist, count_hh4_hist)
+
+count_how_many1_hist <- ggplot(train, aes(x = count_howmany1)) + geom_histogram(bins = 30)
+count_how_many2_hist <- ggplot(train, aes(x = count_howmany2)) + geom_histogram(bins = 30)
+count_how_many3_hist <- ggplot(train, aes(x = count_howmany3)) + geom_histogram(bins = 30)
+count_how_many4_hist <- ggplot(train, aes(x = count_howmany4)) + geom_histogram(bins = 30)
+grid.arrange(count_how_many1_hist, count_how_many2_hist, count_how_many3_hist, count_how_many4_hist)
+
+count_1824_hist <- ggplot(train, aes(x = count_1824)) + geom_histogram(bins = 30)
+count_2534_hist <- ggplot(train, aes(x = count_2534)) + geom_histogram(bins = 30)
+count_3544_hist <- ggplot(train, aes(x = count_3544)) + geom_histogram(bins = 30)
+count_4554_hist <- ggplot(train, aes(x = count_4554)) + geom_histogram(bins = 30)
+count_5564_hist <- ggplot(train, aes(x = count_5564)) + geom_histogram(bins = 30)
+count_65up_hist <- ggplot(train, aes(x = count_65up)) + geom_histogram(bins = 30)
+grid.arrange(count_1824_hist, count_2534_hist, count_3544_hist, count_4554_hist, count_5564_hist, count_65up_hist)
+
+count_und25k_hist <- ggplot(train, aes(x = count_und25k)) + geom_histogram(bins = 30)
+count_2549k_hist <- ggplot(train, aes(x = count_2549k)) + geom_histogram(bins = 30)
+count_5074k_hist <- ggplot(train, aes(x = count_5074k)) + geom_histogram(bins = 30)
+count_7599k_hist <- ggplot(train, aes(x = count_7599k)) + geom_histogram(bins = 30)
+count_100149k_hist <- ggplot(train, aes(x = count_100149k)) + geom_histogram(bins = 30)
+count_150kup_hist <- ggplot(train, aes(x = count_150kup)) + geom_histogram(bins = 30)
+grid.arrange(count_und25k_hist, count_2534_hist, count_5074k_hist, count_7599k_hist, count_100149k_hist, count_150kup_hist)
+
+count_lessHS_hist <- ggplot(train, aes(x = count_lessHS)) + geom_histogram(bins = 30) 
+count_HS_hist <- ggplot(train, aes(x = count_HS)) + geom_histogram(bins = 30)
+count_B_hist <- ggplot(train, aes(x = count_B)) + geom_histogram(bins = 30)
+count_G_hist <- ggplot(train, aes(x = count_G)) + geom_histogram(bins = 30)
+grid.arrange(count_lessHS_hist, count_HS_hist, count_B_hist, count_G_hist)
+
+## Outliers 
+count_female_box <- ggplot(train, aes(x = count_female)) + geom_boxplot()
+count_male_box <- ggplot(train, aes(x = count_male)) + geom_boxplot()
+
+count_box <- ggplot(train, aes(x = count)) + geom_boxplot()
+grid.arrange(count_female_box, count_male_box, count_box)
+
+count_less5_box <- ggplot(train, aes(x = count_less5)) + geom_boxplot()
+count_5to10_box <- ggplot(train, aes(x = count_5to10)) + geom_boxplot()
+count_over10_box <- ggplot(train, aes(x = count_over10)) + geom_boxplot()
+grid.arrange(count_less5_box, count_5to10_box, count_over10_box)
+
+count_hh1_box <- ggplot(train, aes(x = count_hh1)) + geom_boxplot()
+count_hh2_box <- ggplot(train, aes(x = count_hh2)) + geom_boxplot()
+count_hh3_box <- ggplot(train, aes(x = count_hh3)) + geom_boxplot()
+count_hh4_box <- ggplot(train, aes(x = count_hh4)) + geom_boxplot()
+grid.arrange(count_hh1_box, count_hh2_box, count_hh3_box, count_hh4_box)
+
+count_how_many1_box <- ggplot(train, aes(x = count_howmany1)) + geom_boxplot()
+count_how_many2_box <- ggplot(train, aes(x = count_howmany2)) + geom_boxplot()
+count_how_many3_box <- ggplot(train, aes(x = count_howmany3)) + geom_boxplot()
+count_how_many4_box <- ggplot(train, aes(x = count_howmany4)) + geom_boxplot()
+grid.arrange(count_how_many1_box, count_how_many2_box, count_how_many3_box, count_how_many4_box)
+
+count_1824_box <- ggplot(train, aes(x = count_1824)) + geom_boxplot()
+count_2534_box <- ggplot(train, aes(x = count_2534)) + geom_boxplot()
+count_3544_box <- ggplot(train, aes(x = count_3544)) + geom_boxplot()
+count_4554_box <- ggplot(train, aes(x = count_4554)) + geom_boxplot()
+count_5564_box <- ggplot(train, aes(x = count_5564)) + geom_boxplot()
+count_65up_box <- ggplot(train, aes(x = count_65up)) + geom_boxplot()
+grid.arrange(count_1824_box, count_2534_box, count_3544_box, count_4554_box, count_5564_box, count_65up_box)
+
+count_und25k_box <- ggplot(train, aes(x = count_und25k)) + geom_boxplot()
+count_2549k_box <- ggplot(train, aes(x = count_2549k)) + geom_boxplot()
+count_5074k_box <- ggplot(train, aes(x = count_5074k)) + geom_boxplot()
+count_7599k_box <- ggplot(train, aes(x = count_7599k)) + geom_boxplot()
+count_100149k_box <- ggplot(train, aes(x = count_100149k)) + geom_boxplot()
+count_150kup_box <- ggplot(train, aes(x = count_150kup)) + geom_boxplot()
+grid.arrange(count_und25k_box, count_2534_box, count_5074k_box, count_7599k_box, count_100149k_box, count_150kup_box)
+
+count_lessHS_box <- ggplot(train, aes(x = count_lessHS)) + geom_boxplot()
+count_HS_box <- ggplot(train, aes(x = count_HS)) + geom_boxplot()
+count_B_box <- ggplot(train, aes(x = count_B)) + geom_boxplot()
+count_G_box <- ggplot(train, aes(x = count_G)) + geom_boxplot()
+grid.arrange(count_lessHS_box, count_HS_box, count_B_box, count_G_box)
+```
+
+### b) Histogram and Boxplot 
+
+### Looking at distribution of newly tf rows
+```{r}
+count_female_hist <- ggplot(train_transformed, aes(x = count_female_tf)) + geom_histogram(bins = 30)
+count_male_hist <- ggplot(train_transformed, aes(x = count_male_tf)) + geom_histogram(bins = 30)
+count_hist <- ggplot(train_transformed, aes(x = count_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_female_hist, count_male_hist, count_hist)
+
+count_less5_hist <- ggplot(train_transformed, aes(x = count_less5_tf)) + geom_histogram(bins = 30)
+count_5to10_hist <- ggplot(train_transformed, aes(x = count_5to10_tf)) + geom_histogram(bins = 30)
+count_over10_hist <- ggplot(train_transformed, aes(x = count_over10_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_less5_hist, count_5to10_hist, count_over10_hist)
+
+count_hh1_hist <- ggplot(train_transformed, aes(x = count_hh1_tf)) + geom_histogram(bins = 30)
+count_hh2_hist <- ggplot(train_transformed, aes(x = count_hh2_tf)) + geom_histogram(bins = 30)
+count_hh3_hist <- ggplot(train_transformed, aes(x = count_hh3_tf)) + geom_histogram(bins = 30)
+count_hh4_hist <- ggplot(train_transformed, aes(x = count_hh4_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_hh1_hist, count_hh2_hist, count_hh3_hist, count_hh4_hist)
+
+count_how_many1_hist <- ggplot(train_transformed, aes(x = count_howmany1_tf)) + geom_histogram(bins = 30)
+count_how_many2_hist <- ggplot(train_transformed, aes(x = count_howmany2_tf)) + geom_histogram(bins = 30)
+count_how_many3_hist <- ggplot(train_transformed, aes(x = count_howmany3_tf)) + geom_histogram(bins = 30)
+count_how_many4_hist <- ggplot(train_transformed, aes(x = count_howmany4_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_how_many1_hist, count_how_many2_hist, count_how_many3_hist, count_how_many4_hist)
+
+count_1824_hist <- ggplot(train_transformed, aes(x = count_1824_tf)) + geom_histogram(bins = 30)
+count_2534_hist <- ggplot(train_transformed, aes(x = count_2534_tf)) + geom_histogram(bins = 30)
+count_3544_hist <- ggplot(train_transformed, aes(x = count_3544_tf)) + geom_histogram(bins = 30)
+count_4554_hist <- ggplot(train_transformed, aes(x = count_4554_tf)) + geom_histogram(bins = 30)
+count_5564_hist <- ggplot(train_transformed, aes(x = count_5564_tf)) + geom_histogram(bins = 30)
+count_65up_hist <- ggplot(train_transformed, aes(x = count_65up_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_1824_hist, count_2534_hist, count_3544_hist, count_4554_hist, count_5564_hist, count_65up_hist)
+
+count_und25k_hist <- ggplot(train_transformed, aes(x = count_und25k_tf)) + geom_histogram(bins = 30)
+count_2549k_hist <- ggplot(train_transformed, aes(x = count_2549k_tf)) + geom_histogram(bins = 30)
+count_5074k_hist <- ggplot(train_transformed, aes(x = count_5074k_tf)) + geom_histogram(bins = 30)
+count_7599k_hist <- ggplot(train_transformed, aes(x = count_7599k_tf)) + geom_histogram(bins = 30)
+count_100149k_hist <- ggplot(train_transformed, aes(x = count_101149k_tf)) + geom_histogram(bins = 30)
+count_150kup_hist <- ggplot(train_transformed, aes(x = count_150kup_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_und25k_hist, count_2534_hist, count_5074k_hist, count_7599k_hist, count_100149k_hist, count_150kup_hist)
+
+count_lessHS_hist <- ggplot(train_transformed, aes(x = count_lessHS_tf)) + geom_histogram(bins = 30)
+count_HS_hist <- ggplot(train_transformed, aes(x = count_HS_tf)) + geom_histogram(bins = 30)
+count_B_hist <- ggplot(train_transformed, aes(x = count_B_tf)) + geom_histogram(bins = 30)
+count_G_hist <- ggplot(train_transformed, aes(x = count_G_tf)) + geom_histogram(bins = 30)
+grid.arrange(count_lessHS_hist, count_HS_hist, count_B_hist, count_G_hist)
+```
+
+### Scatterplot
+
+#### i) Scatterplot of all count predictor variables against log_total (response variable)
+```{r}
+pairs(log_total ~ count + count_female + count_male + count_less5 + count_5to10 + count_over10, data = train)
+pairs(log_total ~ count_hh1 + count_hh2 + count_hh3 + count_hh4 + count_howmany1 + count_howmany2 + count_howmany3 + count_howmany4, data = train)
+pairs(log_total ~ count_1824 + count_2534 + count_3544 + count_4554 + count_5564 + count_65up, data = train)
+pairs(log_total ~ count_und25k + count_2549k + count_5074k + count_7599k + count_100149k + count_150kup + count_lessHS +count_HS +  count_B + count_G, data = train)
+```
+
+
+#### ii) Scatterplot of all transformed count predictor variables against log_total (response variable)
+```{r}
+pairs(log_total ~ count_tf + count_female_tf + count_male_tf + count_less5_tf + count_5to10_tf + count_over10_tf, data = train_transformed)
+
+pairs(log_total ~ count_hh1_tf + count_hh2_tf + count_hh3_tf + count_hh4_tf + count_howmany1_tf + count_howmany2_tf + count_howmany3_tf + count_howmany4_tf, data = train_transformed)
+
+pairs(log_total ~ count_1824_tf + count_2534_tf + count_3544_tf + count_4554_tf + count_5564_tf + count_65up_tf, data = train_transformed)
+
+pairs(log_total ~ count_und25k_tf + count_2549k_tf + count_5074k_tf + count_7599k_tf + count_101149k_tf + count_150kup_tf + count_lessHS +count_HS_tf +  count_B_tf + count_G_tf, data = train_transformed)
+```
+
+## EDA - 2 Var
+
+### a) Month v.s. Log_total Every year 
+```{r}
+month_vs_log_total_2018 <- ggplot(train[which(train$year == 2018),], aes(x = month, y = log_total)) + geom_col() + xlab("Month") + theme(axis.text = element_text(size = 7)) 
+month_vs_log_total_2019 <- ggplot(train[which(train$year == 2019),], aes(x = month, y = log_total)) + geom_col() + xlab("Month") + theme(axis.text = element_text(size = 7))
+month_vs_log_total_2020 <- ggplot(train[which(train$year == 2020),], aes(x = month, y = log_total)) + geom_col() + xlab("Month") + theme(axis.text = element_text(size = 7))
+month_vs_log_total_2021 <- ggplot(train[which(train$year == 2021),],aes(x = month, y = log_total)) + geom_col() + xlab("Month") + theme(axis.text = element_text(size = 7))
+month_vs_log_total_2022 <- ggplot(train[which(train$year == 2022),], aes(x = month, y = log_total)) + geom_col() + xlab("Month") + theme(axis.text = element_text(size = 7))
+grid.arrange(month_vs_log_total_2018, month_vs_log_total_2019, month_vs_log_total_2020, month_vs_log_total_2021, month_vs_log_total_2022) 
+
+year <- factor(train$year)
+df <- data_frame(train$month, train$log_total, year)
+ggplot(df, aes(x = train$month, y = train$log_total, fill = year)) + 
+  geom_bar(stat = 'identity', position = 'dodge') + xlab("Month") + ylab("log_total") + ggtitle("Month v.s. Log_Total separated by years 2018-2022") + theme(plot.title = element_text(hjust = 0.5), axis.text = element_text(size = 7))
+```
+
+### b) Number of Observations per Year
+```{r}
+ggplot(train, aes(year)) + geom_bar() + ggtitle("Number of Observations per Year") + theme(plot.title = element_text(hjust = 0.5), axis.text = element_text(size = 7))
+freq_year <- table(train$year)
+freq_year
+```
+
+Results: It looks about the same across years and does not seem to have much significance across months 
+
+### c) Different states v.s. Log_Total 
+```{r}
+states_ordered <- sort(unique(train$q_demos_state))
+al_fl_boxplot <- ggplot(data = train[which(train$q_demos_state %in% states_ordered[1:10] ), ], mapping = aes(x = q_demos_state, y = log_total)) + geom_boxplot() + theme(axis.text = element_text(size = 3))
+ga_me_boxplot <- ggplot(data = train[which(train$q_demos_state %in% states_ordered[11:20] ), ], mapping = aes(x = q_demos_state, y = log_total)) + geom_boxplot() + theme(axis.text = element_text(size = 3))
+md_nh_boxplot <- ggplot(data = train[which(train$q_demos_state %in% states_ordered[21:30] ), ], mapping = aes(x = q_demos_state, y = log_total)) + geom_boxplot() + theme(axis.text = element_text(size = 3))
+nj_ri_boxplot <- ggplot(data = train[which(train$q_demos_state %in% states_ordered[31:40] ), ], mapping = aes(x = q_demos_state, y = log_total)) + geom_boxplot() + theme(axis.text = element_text(size = 3))
+sc_wy_boxplot <- ggplot(data = train[which(train$q_demos_state %in% states_ordered[41:51] ), ], mapping = aes(x = q_demos_state, y = log_total)) + geom_boxplot() + theme(axis.text = element_text(size = 3))
+grid.arrange(al_fl_boxplot, ga_me_boxplot, md_nh_boxplot, nj_ri_boxplot, sc_wy_boxplot,
+     top = textGrob("Boxplot of Log_Total for Each State",gp=gpar(fontsize=20,font=3)))
+```
+
+Results: Most states have pretty high log_totals of about 10^(3.5-4) with the exception of Alaska, Hawaii, Idaho, Montana, North Dakota, Rhode Island, South Dakota, Vermont, and Wyoming who have a range of about 10^(2.5-3) 
+
+
+### d) Households v.s. Log_Total 
+```{r}
+ggplot(train, aes(x = count_hh1, y = log_total)) + geom_point(aes(color = 'red'), alpha = 0.3) + 
+  geom_point(aes(x = count_hh2, y = log_total, color = 'orange'), alpha = 0.3) + 
+  geom_point(aes(x = count_hh3, y = log_total, color = 'black'), alpha = 0.3) + 
+  geom_point(aes(x = count_hh4, y = log_total, color = 'green'), alpha = 0.3) + labs(title = "Count of Household Size v.s. Log_Total Scatterplot", x = "Count of Household Size", y = "Log_Total") + scale_color_manual(values = c('red', 'orange', 'black', 'green'), labels = c('Household Size of 1', 'Household Size of 2', 'Household Size of 3', 'Household Size of 4+'))
+
+ggplot(train, aes(x = count_less5, y = log_total)) + 
+  geom_smooth(aes(x = count_hh1, y = log_total, color = 'red'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_hh2, y = log_total, color = 'orange'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_hh3, y = log_total, color = 'black'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_hh4, y = log_total, color = 'green'), method = 'loess', se = FALSE) + labs(title = "Count of Household Size v.s. Log_Total Scatterplot", x = "Log_Count of Household Size", y = "Log_Total") + scale_color_manual(values = c('red', 'orange', 'black', 'green'), labels = c('Household Size of 1', 'Household Size of 2', 'Household Size of 3', 'Household Size of 4+'))
+```
+
+
+### e) Distribution of Log_Total based on number of orders placed per month 
+```{r}
+ggplot(train, aes(x = count_less5, y = log_total)) + 
+  geom_point(aes(x = count_less5, y = log_total, color = 'red'), alpha = 0.3) + 
+  geom_point(aes(x = count_5to10, y = log_total, color = 'orange'), alpha = 0.3) + 
+  geom_point(aes(x = count_over10, y = log_total, color = 'black'), alpha = 0.3) + 
+ labs(title = "Count of Orders Purchased Per Month v.s. Log_Total Scatterplot", x = "Count of Orders Purchased Per Month", y = "Log_Total") + scale_color_manual(values = c('red', 'orange', 'black'), labels = c('Less than 5 Orders Purchased', 'Count of 5 - 10 Orders Purchased', 'Count of Over 10 Orders Per Month'))
+
+ggplot(train, aes(x = count_less5, y = log_total)) + 
+  geom_smooth(aes(x = count_less5, y = log_total, color = 'red'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_5to10, y = log_total, color = 'orange'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_over10, y = log_total, color = 'black'), method = 'loess', se = FALSE) + 
+ labs(title = "Count of Orders Purchased Per Month v.s. Log_Total Scatterplot", x = "Count of Orders Purchased Per Month", y = "Log_Total") + scale_color_manual(values = c('red', 'orange', 'black'), labels = c('Less than 5 Orders Purchased', 'Count of 5 - 10 Orders Purchased', 'Count of Over 10 Orders Per Month'))
+```
+
+### f) Distribution of Log_Total Based on Gender
+```{r}
+ggplot(train, aes(x = count_female, y = log_total)) + 
+  geom_point(aes(color = "blue")) + 
+  geom_point(aes(x = count_male, y = log_total, color = 'red')) + 
+  labs(title = "Gender v.s. Log_Total Scatterplot", x = "Count of Each Gender", y = "Log_Total") + scale_color_manual(values = c('blue', 'red'), labels = c('Count of Female', 'Male'))
+```
+
+### g) Distribution of Log_Total based on Number of People who Share an Account 
+```{r}
+ggplot(train, aes(x = count_howmany1, y = log_total)) + geom_point(aes(color = 'red'), alpha = 0.3) + 
+  geom_point(aes(x = count_howmany2, y = log_total, color = 'orange'), alpha = 0.3) + 
+  geom_point(aes(x = count_howmany3, y = log_total, color = 'black'), alpha = 0.3) + 
+  geom_point(aes(x = count_howmany4, y = log_total, color = 'green'), alpha = 0.3) + 
+  labs(title = "Count of How Many People Share an Account v.s. Log_Total Scatterplot",
+       x = "Count of How Many People Share an Account in a Household",
+       y = "Log_Total") + 
+  scale_color_manual(values = c('red', 'orange', 'black', 'green'), labels = c('1 Person', '2 People', '3 People', '4 People')) 
+```
+
+### h) Distribution of Log_Total based on Customer Age Variable
+```{r}
+ggplot(train, aes(x = count_1824, y = log_total)) + geom_point(aes(color = 'red'), alpha = 0.3) +
+  geom_point(aes(x = count_2534, y = log_total, color = 'orange'), alpha = 0.3) +
+  geom_point(aes(x = count_3544, y = log_total, color = 'black'), alpha = 0.3) +
+  geom_point(aes(x = count_4554, y = log_total, color = 'green'), alpha = 0.3) +
+  geom_point(aes(x = count_5564, y = log_total, color = 'blue'), alpha = 0.3) +
+  geom_point(aes(x = count_65up, y = log_total, color = 'purple'), alpha = 0.3) +
+  labs(title = "Count of How Many People Are in Each Age Range vs. Log_Total Scatterplot",
+       x = "Number of People in Each Age Group",
+       y = "Log_Total") +
+  scale_color_manual(values = c('red', 'orange', 'black', 'green', 'blue', 'purple'),
+                     labels = c('18-24', '25-34', '35-44', '45-54', '55-64', '65+'))
+
+ggplot(train, aes(x = count_1824, y = log_total)) + 
+  geom_smooth(aes(x = count_1824, y = log_total, color = 'red'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_2534, y = log_total, color = 'orange'), method = 'loess', se = FALSE) +
+  geom_smooth(aes(x = count_3544, y = log_total, color = 'black'), method = 'loess', se = FALSE) +
+  geom_smooth(aes(x = count_4554, y = log_total, color = 'green'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_5564, y = log_total, color = 'blue'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_65up, y = log_total, color = 'purple'), method = 'loess', se = FALSE) + 
+  labs(title = "Count of How Many People Are in Each Age Range vs. Log_Total Scatterplot",
+       x = "Number of People in Each Age Group",
+       y = "Log_Total") +
+  scale_color_manual(values = c('red', 'orange', 'black', 'green', 'blue', 'purple'),
+                     labels = c('18-24', '25-34', '35-44', '45-54', '55-64', '65+')) 
+```
+
+### i) Distribution of customer income v.s. Log_Total 
+```{r}
+ggplot(train, aes(x = count_und25k, y = log_total)) + geom_point(aes(color = 'red'), alpha = 0.3) +
+  geom_point(aes(x = count_2549k, y = log_total, color = 'orange'), alpha = 0.3) +
+  geom_point(aes(x = count_5074k, y = log_total, color = 'black'), alpha = 0.3) +
+  geom_point(aes(x = count_7599k, y = log_total, color = 'green'), alpha = 0.3) +
+  geom_point(aes(x = count_100149k, y = log_total, color = 'blue'), alpha = 0.3) +
+  geom_point(aes(x = count_150kup, y = log_total, color = 'purple'), alpha = 0.3) +
+  labs(title = "Count of Number of People in Each Income Bracket vs. Log_Total Scatterplot",
+       x = "Number of People in Each Income Bracket",
+       y = "Log_Total") +
+  scale_color_manual(values = c('red', 'orange', 'black', 'green', 'blue', 'purple'),
+                     labels = c('Under 25k', '25-49k', '50-74k', '75-99k', '100-149k', '150k+')) 
+
+ggplot(train, aes(x = count_howmany1, y = log_total)) +
+  labs(title = "Count of Number of People in Each Income Bracket vs. Log_Total Scatterplot",
+       x = "Number of People in Each Income Bracket",
+       y = "Log_Total") +
+  scale_color_manual(values = c('red', 'orange', 'black', 'green', 'blue', 'purple'),
+                     labels = c('Under 25k', '25-49k', '50-74k', '75-99k', '100-149k', '150k+')) + 
+  geom_smooth(aes(x = count_und25k, y = log_total, color = 'red'), method = 'loess', se = FALSE) +
+  geom_smooth(aes(x = count_2549k, y = log_total, color = 'orange'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_5074k, y = log_total, color = 'black'), method = 'loess', se = FALSE) +
+  geom_smooth(aes(x = count_7599k, y = log_total, color = 'green'), method = 'loess', se = FALSE) + 
+  geom_smooth(aes(x = count_100149k, y = log_total, color = 'blue'), method = 'loess', se = FALSE) +
+  geom_smooth(aes(x = count_150kup, y = log_total, color = 'purple'), method = 'loess', se = FALSE)
+```
+
+### j) Distribution of Log_Total based on Customer Education
+```{r}
+ggplot(train, aes(x = count_lessHS, y = log_total)) + geom_point(aes(color = 'red'), alpha = 0.3) +
+  geom_point(aes(x = count_HS, y = log_total, color = 'orange'), alpha = 0.3) +
+  geom_point(aes(x = count_B, y = log_total, color = 'black'), alpha = 0.3) +
+  geom_point(aes(x = count_G, y = log_total, color = 'green'), alpha = 0.3) +
+  labs(title = "Count of Customers with Each Type of Education vs. Log_Total Scatterplot",
+       x = "Number of Customers with Each Type of Education",
+       y = "Log_Total") +
+  scale_color_manual(values = c('red', 'orange', 'black', 'green'),
+                     labels = c('Less Than High School Diploma', 'High School Diploma', 'Bachelor\'s Degree', 'Graduate/Professional Degree')) 
+
+ggplot(train, aes(x = count_lessHS, y = log_total)) + 
+  geom_smooth(aes(x = count_lessHS, y = log_total, color = 'red'), method = 'gam', se = FALSE) + 
+  geom_smooth(aes(x = count_HS, y = log_total, color = 'orange'), method = 'gam', se = FALSE) +
+  geom_smooth(aes(x = count_B, y = log_total, color = 'black'), method = 'gam', se = FALSE) +
+  geom_smooth(aes(x = count_G, y = log_total, color = 'green'), method = 'gam', se = FALSE) + 
+  labs(title = "Count of Customers with Each Type of Education vs. Log_Total Scatterplot",
+       x = "Number of Customers with Each Type of Education",
+       y = "Log_Total") +
+  scale_color_manual(values = c('red', 'orange', 'black', 'green'),
+                     labels = c('Less Than High School Diploma', 'High School Diploma', 'Bachelor\'s Degree', 'Graduate/Professional Degree')) 
+```
+
+# Results: 
+Overall, it seems like Less than HS, and Bachelor's Degree seem to be the ones who tend to order more goods (under age < 18 and age > 21). Additionally, < 50k people order a lot of the overall total and 18-24 and 45-54 people seem to order a lot of goods as well. Another common trend is that the most common number of people who sare an account is 3-4. Lastly, most states have pretty high log_totals of about 10^3.5-4 with the exception of Alaska, Hawaii, Idaho, Montana, North Dakota, Rhode Island, South Dakota, Vermont, and Wyoming who have. arange of about 10^(2.5-3).
+
+So, we should further investigate these variables: customer education, customer income, age range, people who share an account, and states. 
+

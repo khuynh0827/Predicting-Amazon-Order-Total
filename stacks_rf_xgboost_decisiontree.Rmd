@@ -1,0 +1,164 @@
+---
+title: "stacks_rf_xgboost_decisiontree"
+author: "Katherine Huynh"
+date: "2024-08-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries, training data, and test data
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(yardstick)
+library(dials)
+library(dplyr)
+library(kknn)
+library(kernlab)
+
+set.seed(2017)
+
+train <- read_csv("train_reg.csv")
+test <- read_csv("test_reg.csv")
+```
+
+## Preprocess data, create cross fold validation, and metric set to compare models 
+```{r}
+# get rid of order_totals column 
+train <- train %>% dplyr::select(!order_totals)
+
+# cross fold validation 
+train_folds <- vfold_cv(train, v = 10)
+
+# create a metric set to compare the other variables with 
+model_metrics <- metric_set(rmse, mae, rsq)
+
+# create a base control_grid to use for the stacks package 
+model_control <- control_grid(save_pred = TRUE, save_workflow = TRUE)
+```
+
+## Create base recipe and define engine for random forest 
+```{r}
+base_recipe <- recipe(log_total ~., data = train) %>%
+  step_mutate(q_demos_state = factor(q_demos_state),
+              year = factor(year),
+              month = factor(month)) %>% 
+  # get rid of zero variance column
+  step_zv(all_predictors()) %>% 
+  # dummy variables from factor columns
+  step_dummy(all_nominal()) %>%  
+  # remove any columns with single unique value
+  step_normalize(all_predictors())
+```
+
+## Define Decision Tree engine, workflow, and tuning grid
+```{r}
+# decision tree model 
+cart_spec <- decision_tree(cost_complexity = tune(), min_n = te()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("regression")
+
+# create the decision tree workflow 
+decision_tree_wf <- workflow() %>% 
+  add_model(cart_spec) %>% 
+  add_recipe(base_recipe)
+
+# parameters for the tuning grid 
+decision_tree_grid <- grid_regular(parameters(cart_spec), 
+                                   levels = 10) 
+
+# use the tune_grid function to test out different values for the tuning grid 
+decision_tree_res <- tune_grid(
+  decision_tree_wf, 
+  resamples = train_folds, 
+  grid = decision_tree_grid,
+  metrics = model_metrics, 
+  control = model_control
+)
+```
+
+## Define Random forest engine, workflow, and tuning grid 
+```{r}
+# random forest model 
+randomForest_spec <- rand_forest(min_n = tune(), 
+                                 trees = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("randomForest")
+
+# random forest workflow 
+random_forest_wf <- workflow() %>% 
+  add_model(randomForest_spec) %>% 
+  add_recipe(base_recipe)
+
+# parameters for random forest grid 
+randforest_grid <- grid_regular(parameters(randomForest_spec), 
+                                levels = 3, 
+                                filter = c(trees > 1)) 
+# decided to get rid of one tree because it seemed that that would be overfitting 
+
+# use tune_grid() to try out different values for the tuning function 
+rf_res <- tune_grid(
+  random_forest_wf, 
+  resamples = train_folds, 
+  grid = randforest_grid, 
+  metrics = model_metrics, 
+  control = model_control
+)
+```
+
+## Define boosted tree engine, workflow, and tuning grid
+```{r}
+# boosted tree model
+xgboost_spec <- boost_tree(learn_rate = tune(), 
+                           trees = tune(), 
+                           tree_depth = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("xgboost")
+
+# boosted tree workflow 
+xgboost_wf <- workflow() %>% 
+  add_model(xgboost_spec) %>% 
+  add_recipe(base_recipe)
+
+# define grid for tuning for the xgboost model 
+xgboost_grid <- grid_regular(parameters(xgboost_spec), 
+                             levels = 3, 
+                             filter = c(trees > 1))
+
+# use tune_grid() to auto tune the xgboost model 
+xgboost_res <- tune_grid(
+  xgboost_wf, 
+  resamples = train_folds, 
+  grid = xgboost_grid, 
+  metrics = model_metrics, 
+  control = model_control
+)
+```
+
+## Define ensemble model and assess predictions from each candidate member to predict the true outcome 
+```{r}
+
+# create a stacks model of the random forest, xgboost model, and decision tree model 
+stacks <- stacks() %>%
+  add_candidates(rf_res) %>% 
+  add_candidates(xgboost_res) %>% 
+  add_candidates(decision_tree_res) 
+
+# use blend_predictions on stack to fit a regularized model on the assessment predictions from each candidate member to predict the true outcome
+# train model on full training set using fit_members
+stacks <- stacks %>% blend_predictions() %>% fit_members() 
+```
+
+## use the stacks model on the test data to create predictions 
+```{r}
+predictions <- predict(stacks, test)  %>% cbind(test %>% select(id))
+predictions <- predictions[, c(2, 1)] # swap the columns id and prediction 
+predictions <- predictions %>% rename(id = id, log_total = .pred) # rename the columns to id and log_total 
+write_csv(predictions, "test_predictions.csv") # write the file 
+```
+
+Note: This model had an RMSE of 0.01708 on full test data after submitting it to Kaggle 
+https://www.kaggle.com/competitions/ucla-stats-101-c-2024-su-regression/submissions#

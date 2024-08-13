@@ -1,0 +1,115 @@
+---
+title: "random_forest.R"
+output: html_document
+date: "2024-08-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries, training data, and test data
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(yardstick)
+library(dials)
+library(dplyr)
+
+set.seed(2017)
+
+train <- read_csv("train_reg.csv")
+test <- read_csv("test_reg.csv")
+```
+
+## Preprocess data, create cross fold validation, and metric set to compare models 
+```{r}
+# get rid of order_totals column 
+train <- train %>% dplyr::select(!order_totals)
+
+# cross fold validation 
+train_folds <- vfold_cv(train, v = 10)
+
+# create a metric set to compare the other variables with 
+model_metrics <- metric_set(rmse, mae, rsq)
+
+# create a base control_grid to use for the stacks package 
+model_control <- control_grid(save_pred = TRUE, save_workflow = TRUE)
+```
+
+## Create base recipe and define engine for random forest 
+```{r}
+base_recipe <- recipe(log_total ~., data = train) %>%
+  step_mutate(q_demos_state = factor(q_demos_state),
+              year = factor(year),
+              month = factor(month)) %>% 
+  # get rid of zero variance column
+  step_zv(all_predictors()) %>% 
+  # dummy variables from factor columns
+  step_dummy(all_nominal()) %>%  
+  # remove any columns with single unique value
+  step_normalize(all_predictors())
+
+# random forest model 
+randomForest_spec <- rand_forest(min_n = tune(), 
+                                 trees = tune(), 
+                                 mtry = tune()) %>% 
+  set_mode("regression") %>% 
+  set_engine("randomForest")
+```
+
+## Create Workflow, define tuning grid for hypertuning, and evaluate results on 10-fold cross validation defined above
+```{r}
+# random forest workflow 
+random_forest_wf <- workflow() %>% 
+  add_model(randomForest_spec) %>% 
+  add_recipe(base_recipe)
+
+recipes_param <- extract_parameter_set_dials(randomForest_spec)
+
+# parameters for boosted forest grid 
+recipes_param_rf <- extract_parameter_set_dials(randomForest_spec) %>% 
+  update("mtry" = mtry(c(1, 20))) 
+
+# parameters for random forest grid 
+rf_grid <- grid_latin_hypercube(recipes_param_rf, 
+                                size = 20)
+
+# use tune_grid() to try out different values for the tuning function 
+rf_res <- tune_grid(
+  random_forest_wf, 
+  resamples = train_folds, 
+  grid = rf_grid, 
+  metrics = model_metrics, 
+  control = model_control
+)
+
+```
+
+## Show Results and fit final hypertuned parameters to the workflow 
+```{r}
+results <- rf_res %>% collect_metrics() %>% filter(.metric == "accuracy")
+results %>% arrange(desc(mean)) # output results 
+
+final_param <- select_best(rf_res, metric = "accuracy") 
+final_param # output the selected parameters
+
+final_rf_wf <- random_forest_wf %>%
+  finalize_workflow(final_param)
+
+# Fit the final model on the full training data
+final_rf_fit <- final_rf_wf %>%
+  fit(data = train)
+```
+
+## Make CSV for Predictions 
+```{r}
+# make final predictions 
+predictions <- predict(final_rf_fit, test)  %>% cbind(test %>% dplyr::select(id))
+predictions <- predictions[, c(2, 1)] # swap the columns id and prediction 
+predictions <- predictions %>% dplyr::rename(id = id, winner = .pred_class) # rename the columns to id and winner 
+write_csv(predictions, "randomForest2024.csv") # write the file to submit to kaggle 
+```
+
+Note: This model had an RMSE of 0.01635 on full test data after submitting it to Kaggle 
+https://www.kaggle.com/competitions/ucla-stats-101-c-2024-su-regression/submissions#

@@ -1,0 +1,164 @@
+---
+title: "stacks_knn_linreg_svm"
+author: "Katherine Huynh"
+date: "2024-08-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries, training data, and test data
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(yardstick)
+library(dials)
+library(dplyr)
+library(kknn)
+library(kernlab)
+
+set.seed(2017)
+
+train <- read_csv("train_reg.csv")
+test <- read_csv("test_reg.csv")
+```
+
+## Preprocess data, create cross fold validation, and metric set to compare models 
+```{r}
+# get rid of order_totals column 
+train <- train %>% dplyr::select(!order_totals)
+
+# cross fold validation 
+train_folds <- vfold_cv(train, v = 10)
+
+# create a metric set to compare the other variables with 
+model_metrics <- metric_set(rmse, mae, rsq)
+
+# create a base control_grid to use for the stacks package 
+model_control <- control_grid(save_pred = TRUE, save_workflow = TRUE)
+```
+
+## Create base recipe and define engine for random forest 
+```{r}
+base_recipe <- recipe(log_total ~., data = train) %>%
+  step_mutate(q_demos_state = factor(q_demos_state),
+              year = factor(year),
+              month = factor(month)) %>% 
+  # get rid of zero variance column
+  step_zv(all_predictors()) %>% 
+  # dummy variables from factor columns
+  step_dummy(all_nominal()) %>%  
+  # remove any columns with single unique value
+  step_normalize(all_predictors())
+```
+
+## Define K Nearest Neighbor Engine, Workflow, and tuning grid 
+```{r}
+knn_spec <- nearest_neighbor(
+  mode = "regression", 
+  neighbors = tune("k")
+) %>% set_engine("kknn")
+
+knn_wflow <- workflow() %>% 
+  add_model(knn_spec) %>% 
+  add_recipe(base_recipe)
+
+knn_res <- 
+  tune_grid(
+    knn_wflow, 
+    resamples = train_folds, 
+    metrics = metric, 
+    grid = 4, 
+    control = ctrl_grid
+  )
+
+knn_res
+```
+
+## Define Linear Regression Engine, Workflow, and apply fit_resamples (not tuning)
+```{r}
+lin_reg_spec <- linear_reg() %>% 
+  set_engine("lm")
+
+lin_reg_wflow <- workflow() %>% 
+  add_model(lin_reg_spec) %>% 
+  add_recipe(base_recipe)
+
+lin_reg_res <- fit_resamples(
+  lin_reg_wflow, 
+  resamples = train_folds, 
+  metrics = metric, 
+  control = ctrl_res
+)
+
+lin_reg_res
+```
+
+## Define SVM Engine, Workflow, and tuning grid 
+```{r}
+svm_spec <- 
+  svm_rbf(
+    cost = tune("cost"), 
+    rbf_sigma = tune("sigma")
+  ) %>%
+  set_engine("kernlab") %>%
+  set_mode("regression")
+
+svm_rec <-
+  base_recipe %>% 
+  step_corr(all_numeric(), -all_outcomes(), threshold = 0.8)
+
+svm_wflow <- 
+  workflow() %>% 
+  add_model(svm_spec) %>%
+  add_recipe(svm_rec)
+
+svm_res <- 
+  tune_grid(
+    svm_wflow, 
+    resamples = train_folds, 
+    grid = 6,
+    metrics = metric,
+    control = ctrl_grid
+  )
+
+svm_res
+```
+
+## Define ensemble model
+```{r}
+stacks()
+
+amazon_data_st <- 
+  stacks() %>%
+  add_candidates(knn_res) %>%
+  add_candidates(lin_reg_res) %>%
+  add_candidates(svm_res)
+
+amazon_model_st <-
+  amazon_data_st %>%
+  blend_predictions(penalty = 0.001)
+
+amazon_model_st <- amazon_model_st %>% fit_members()
+```
+
+## Output Results
+```{r}
+collect_parameters(amazon_model_st, "svm_res")
+autoplot(amazon_model_st)
+autoplot(amazon_model_st, type = "members")
+autoplot(amazon_model_st, type = "weights")
+```
+
+## Write Predictions 
+```{r}
+predictions <- predict(amazon_model_st, test)  %>% cbind(test %>% dplyr::select(id))
+predictions <- predictions[, c(2, 1)]
+predictions <- predictions %>% dplyr::rename(id = id, log_total = .pred)
+write_csv(predictions, "test_predictions.csv")
+```
+
+Note: This model had an RMSE of 0.02050 on full test data after submitting it to Kaggle 
+https://www.kaggle.com/competitions/ucla-stats-101-c-2024-su-regression/submissions#
